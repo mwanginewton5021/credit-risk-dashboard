@@ -1,4 +1,3 @@
-
 import dash
 from dash import html, dcc, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
@@ -65,13 +64,15 @@ metrics = {
 }
 
 # Utility Functions
-def log_prediction(inputs, prediction, pd_val):
-    return {
+def log_prediction(inputs, prediction, pd_val, error=None):
+    log_entry = {
         'Timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         **inputs,
-        'Prediction': prediction,
-        'PD': pd_val
+        'Prediction': prediction if prediction else 'N/A',
+        'PD': pd_val if pd_val is not None else 'N/A',
+        'Error': error if error else 'Success'
     }
+    return log_entry
 
 def create_confusion_matrix(metrics, theme):
     try:
@@ -294,24 +295,50 @@ def update_form(applicant_id):
     [State(f'input-{col.lower()}', 'value') for col in feature_columns],
     State('prediction-log-store', 'data')
 )
-def predict_risk(n_clicks, risk_threshold, *input_values, log_data):
+def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
     if n_clicks is None:
-        return "", {}, "", log_data, log_data
+        return "", {}, "", log_data or [], log_data or []
+    
     inputs = dict(zip(feature_columns, input_values))
-    if None in input_values or '' in input_values:
-        return "", {}, "Please fill all fields.", log_data, log_data
+    # Validate inputs
+    missing_fields = [col for col, val in inputs.items() if val is None or val == '']
+    if missing_fields:
+        error_msg = f"Missing or empty fields: {', '.join(missing_fields)}"
+        log_entry = log_prediction(inputs, None, None, error=error_msg)
+        return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
+    
     try:
+        # Validate numeric inputs
         for col in numeric_cols:
-            if inputs[col] is not None:
+            try:
                 inputs[col] = float(inputs[col])
+                if inputs[col] < 0:
+                    error_msg = f"Invalid value for {col}: must be non-negative"
+                    log_entry = log_prediction(inputs, None, None, error=error_msg)
+                    return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
+            except (ValueError, TypeError):
+                error_msg = f"Invalid value for {col}: must be a number"
+                log_entry = log_prediction(inputs, None, None, error=error_msg)
+                return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
+        
+        # Validate categorical inputs
         for col in categorical_cols:
-            if inputs[col] is not None:
-                inputs[col] = str(inputs[col])
+            inputs[col] = str(inputs[col])
+            if inputs[col] not in df[col].unique():
+                error_msg = f"Invalid value for {col}: must be one of {', '.join(map(str, df[col].unique()))}"
+                log_entry = log_prediction(inputs, None, None, error=error_msg)
+                return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
+        
+        # Create DataFrame and preprocess
         input_df = pd.DataFrame([inputs])
         input_transformed = preprocessor.transform(input_df)
+        
+        # Make prediction
         pred_proba = model.predict_proba(input_transformed)[:, 1][0]
         prediction = 'High Risk' if pred_proba >= risk_threshold else 'Medium Risk' if pred_proba >= 0.3 else 'Low Risk'
         color = 'red' if pred_proba >= risk_threshold else 'yellow' if pred_proba >= 0.3 else 'green'
+        
+        # Create gauge
         gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=pred_proba * 100,
@@ -327,11 +354,15 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data):
             }
         ))
         gauge.update_layout(autosize=True, responsive=True)
+        
+        # Log prediction
         log_entry = log_prediction(inputs, prediction, pred_proba)
-        log_data = log_data + [log_entry]
-        return html.H5(prediction, style={'color': color}), gauge, "", log_data, log_data
+        return html.H5(prediction, style={'color': color}), gauge, "", (log_data or []) + [log_entry], (log_data or []) + [log_entry]
+    
     except Exception as e:
-        return "", {}, f"Prediction Error: {str(e)}", log_data, log_data
+        error_msg = f"Prediction failed: {str(e)}"
+        log_entry = log_prediction(inputs, None, None, error=error_msg)
+        return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
 
 @app.callback(
     [Output('confusion-matrix', 'figure'), Output('roc-curve', 'figure'), Output('shap-summary', 'figure'),
@@ -431,17 +462,30 @@ def batch_score(contents, n_clicks, age_range, credit_score_range, risk_threshol
     [State(f'input-{col.lower()}', 'value') for col in feature_columns],
     State('risk-threshold', 'value')
 )
-def download_csv(n_clicks, *input_values, risk_threshold):
+def download_csv(n_clicks, *input_values, risk_threshold=None):
     if n_clicks is None:
         return None
     try:
         inputs = dict(zip(feature_columns, input_values))
+        # Validate inputs
+        missing_fields = [col for col, val in inputs.items() if val is None or val == '']
+        if missing_fields:
+            return None  # Silently return None to avoid crashing
+        if risk_threshold is None:
+            risk_threshold = 0.7  # Default value if risk_threshold is missing
+        # Validate numeric inputs
         for col in numeric_cols:
-            if inputs[col] is not None:
+            try:
                 inputs[col] = float(inputs[col])
+                if inputs[col] < 0:
+                    return None
+            except (ValueError, TypeError):
+                return None
+        # Validate categorical inputs
         for col in categorical_cols:
-            if inputs[col] is not None:
-                inputs[col] = str(inputs[col])
+            inputs[col] = str(inputs[col])
+            if inputs[col] not in df[col].unique():
+                return None
         input_df = pd.DataFrame([inputs])
         input_transformed = preprocessor.transform(input_df)
         pred_proba = model.predict_proba(input_transformed)[:, 1][0]
@@ -452,7 +496,7 @@ def download_csv(n_clicks, *input_values, risk_threshold):
             'PD': pred_proba
         }])
         return dcc.send_data_frame(result.to_csv, "report.csv")
-    except Exception as e:
+    except Exception:
         return None
 
 @app.callback(
@@ -470,10 +514,8 @@ def download_shap(n_clicks, theme):
         fig.write(buffer, format='png')
         buffer.seek(0)
         return dcc.send_bytes(buffer.getvalue(), "shap_summary.png")
-    except Exception as e:
+    except Exception:
         return None
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-
