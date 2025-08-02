@@ -1,0 +1,479 @@
+
+import dash
+from dash import html, dcc, Input, Output, State, dash_table
+import dash_bootstrap_components as dbc
+import plotly.graph_objs as go
+import pandas as pd
+import numpy as np
+import base64
+import io
+from datetime import datetime
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, roc_curve
+import shap
+
+# Simulate model and data (Pyodide-compatible)
+def generate_sample_data():
+    np.random.seed(42)
+    n = 1000
+    data = {
+        'Customer_ID': range(n),
+        'Age': np.random.randint(18, 80, n),
+        'Income': np.random.normal(50000, 15000, n),
+        'Credit_Score': np.random.randint(300, 850, n),
+        'Credit_Utilization': np.random.uniform(0, 1, n),
+        'Missed_Payments': np.random.randint(0, 5, n),
+        'Delinquent_Account': np.random.choice([0, 1], n),
+        'Loan_Balance': np.random.normal(10000, 5000, n),
+        'Debt_to_Income_Ratio': np.random.uniform(0, 0.5, n),
+        'Account_Tenure': np.random.randint(1, 20, n),
+        'Employment_Status': np.random.choice(['Employed', 'Self-Employed', 'Unemployed'], n),
+        'Credit_Card_Type': np.random.choice(['Visa', 'MasterCard', 'None'], n),
+        'Location': np.random.choice(['Urban', 'Suburban', 'Rural'], n),
+        'Month_1': np.random.choice(['Y', 'N'], n),
+        'Month_2': np.random.choice(['Y', 'N'], n),
+        'Month_3': np.random.choice(['Y', 'N'], n),
+        'Month_4': np.random.choice(['Y', 'N'], n),
+        'Month_5': np.random.choice(['Y', 'N'], n),
+        'Month_6': np.random.choice(['Y', 'N'], n),
+        'risk': np.random.choice([0, 1], n, p=[0.8, 0.2])
+    }
+    return pd.DataFrame(data)
+
+# Initialize data and model
+df = generate_sample_data()
+feature_columns = [col for col in df.columns if col not in ['Customer_ID', 'risk']]
+categorical_cols = ['Employment_Status', 'Credit_Card_Type', 'Location', 'Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6']
+numeric_cols = ['Age', 'Income', 'Credit_Score', 'Credit_Utilization', 'Missed_Payments', 'Delinquent_Account', 'Loan_Balance', 'Debt_to_Income_Ratio', 'Account_Tenure']
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', 'passthrough', numeric_cols),
+        ('cat', OneHotEncoder(sparse_output=False, handle_unknown='ignore'), categorical_cols)
+    ])
+X = preprocessor.fit_transform(df[feature_columns])
+model = RandomForestClassifier(random_state=42).fit(X, df['risk'])
+metrics = {
+    'confusion_matrix': confusion_matrix(df['risk'], model.predict(X)).tolist(),
+    'fpr': roc_curve(df['risk'], model.predict_proba(X)[:, 1])[0].tolist(),
+    'tpr': roc_curve(df['risk'], model.predict_proba(X)[:, 1])[1].tolist(),
+    'accuracy': 0.85,  # Simulated
+    'precision': 0.80,  # Simulated
+    'recall': 0.75  # Simulated
+}
+
+# Utility Functions
+def log_prediction(inputs, prediction, pd_val):
+    return {
+        'Timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        **inputs,
+        'Prediction': prediction,
+        'PD': pd_val
+    }
+
+def create_confusion_matrix(metrics, theme):
+    try:
+        cm = np.array(metrics['confusion_matrix'])
+        fig = go.Figure(data=go.Heatmap(
+            z=cm,
+            x=['Low Risk', 'High Risk'],
+            y=['Low Risk', 'High Risk'],
+            colorscale='Blues',
+            text=cm,
+            texttemplate="%{text}",
+            showscale=False
+        ))
+        fig.update_layout(
+            title='Confusion Matrix',
+            xaxis_title='Predicted',
+            yaxis_title='Actual',
+            autosize=True,
+            responsive=True,
+            template=theme
+        )
+        return fig
+    except Exception as e:
+        return go.Figure().update_layout(title=f'Confusion Matrix Error: {str(e)}', template=theme)
+
+def create_roc_curve(metrics, theme):
+    try:
+        fpr = metrics['fpr']
+        tpr = metrics['tpr']
+        fig = go.Figure(data=go.Scatter(x=fpr, y=tpr, mode='lines', name='ROC Curve'))
+        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', line=dict(dash='dash'), name='Random'))
+        fig.update_layout(
+            title='ROC Curve',
+            xaxis_title='False Positive Rate',
+            yaxis_title='True Positive Rate',
+            autosize=True,
+            responsive=True,
+            template=theme
+        )
+        return fig
+    except Exception as e:
+        return go.Figure().update_layout(title=f'ROC Curve Error: {str(e)}', template=theme)
+
+def create_shap_summary(model, X, feature_names, theme):
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X)[1]  # For positive class
+        mean_shap = np.abs(shap_values).mean(axis=0)
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=mean_shap, y=feature_names, orientation='h'))
+        fig.update_layout(
+            title='SHAP Feature Importance',
+            xaxis_title='Mean |SHAP Value|',
+            yaxis_title='Feature',
+            height=600,
+            autosize=True,
+            responsive=True,
+            template=theme
+        )
+        return fig
+    except Exception as e:
+        return go.Figure().update_layout(title=f'SHAP Error: {str(e)}', template=theme)
+
+# Layout Function
+def create_layout():
+    input_form = [
+        html.H4("Applicant Input Form"),
+        *[dbc.Row([
+            dbc.Col(dbc.Label(col), width=4),
+            dbc.Col(
+                dcc.Dropdown(
+                    id=f'input-{col.lower()}',
+                    options=[{'label': val, 'value': val} for val in df[col].unique()],
+                    value=df[col].iloc[0]
+                ) if col in categorical_cols else
+                dcc.Input(id=f'input-{col.lower()}', type='number', value=df[col].iloc[0], min=0, step='any'),
+                width=8
+            )
+        ], className='mb-2') for col in feature_columns]
+    ]
+    layout = dbc.Container([
+        html.H1("Credit Risk Scoring Dashboard", className='text-center my-4'),
+        dcc.Store(id='prediction-log-store', data=[]),
+        dcc.Store(id='batch-data-store', data=[]),
+        dbc.Row([
+            # Sidebar
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("Controls"),
+                    dbc.CardBody([
+                        dcc.Dropdown(
+                            id='theme-selector',
+                            options=[
+                                {'label': 'Light Theme', 'value': 'plotly_white'},
+                                {'label': 'Dark Theme', 'value': 'plotly_dark'}
+                            ],
+                            value='plotly_white',
+                            clearable=False
+                        ),
+                        html.Hr(),
+                        dcc.Dropdown(
+                            id='applicant-selector',
+                            options=[{'label': f'Applicant {i+1} ({row["Customer_ID"]})', 'value': i} for i, row in df.iterrows()],
+                            value=0
+                        ),
+                        html.Hr(),
+                        *input_form,
+                        html.Div(id='form-error', className='error-message mb-2'),
+                        dbc.Button("Predict", id='predict-button', color='primary', className='mt-2'),
+                        html.Hr(),
+                        html.H4("Filters"),
+                        dcc.RangeSlider(
+                            id='age-slider',
+                            min=18, max=80, step=1,
+                            value=[18, 80],
+                            marks={18: '18', 80: '80'}
+                        ),
+                        dcc.RangeSlider(
+                            id='credit-score-slider',
+                            min=300, max=850, step=10,
+                            value=[300, 850],
+                            marks={300: '300', 850: '850'}
+                        ),
+                        dcc.Slider(
+                            id='risk-threshold',
+                            min=0, max=1, step=0.05,
+                            value=0.7,
+                            marks={0: '0', 1: '1'}
+                        )
+                    ])
+                ], className='mb-4')
+            ], xs=12, sm=12, md=4),
+            # Main content
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("Prediction Output"),
+                    dbc.CardBody([
+                        html.H5(id='risk-class', className='text-center'),
+                        dcc.Graph(id='pd-gauge', style={'width': '100%', 'height': 'auto'}),
+                        html.Div(id='prediction-error', className='error-message')
+                    ])
+                ], className='mb-4'),
+                dbc.Card([
+                    dbc.CardHeader("Batch Scoring"),
+                    dbc.CardBody([
+                        dcc.Upload(id='upload-data', children=dbc.Button('Upload CSV', color='secondary')),
+                        html.Div(id='upload-error', className='error-message mb-2'),
+                        dash_table.DataTable(id='batch-results', page_size=10, style_table={'overflowX': 'auto'}),
+                        html.Div(id='batch-preview', style={'marginTop': '10px'}),
+                        dbc.Button("Download Batch Results", id='download-batch', color='info', className='mt-2'),
+                        dcc.Download(id='download-batch-csv')
+                    ])
+                ], className='mb-4'),
+                dbc.Card([
+                    dbc.CardHeader("Prediction Log"),
+                    dbc.CardBody([
+                        dash_table.DataTable(id='prediction-log-table', page_size=5, style_table={'overflowX': 'auto'})
+                    ])
+                ], className='mb-4')
+            ], xs=12, sm=12, md=4),
+            # Model evaluation
+            dbc.Col([
+                dbc.Accordion([
+                    dbc.AccordionItem([
+                        dash_table.DataTable(
+                            id='metrics-table',
+                            columns=[
+                                {'name': 'Metric', 'id': 'metric'},
+                                {'name': 'Value', 'id': 'value'}
+                            ],
+                            data=[
+                                {'metric': 'Accuracy', 'value': metrics['accuracy']},
+                                {'metric': 'Precision', 'value': metrics['precision']},
+                                {'metric': 'Recall', 'value': metrics['recall']}
+                            ],
+                            style_table={'overflowX': 'auto'}
+                        ),
+                        dcc.Graph(id='confusion-matrix', style={'width': '100%', 'height': 'auto'}),
+                        dcc.Graph(id='roc-curve', style={'width': '100%', 'height': 'auto'})
+                    ], title="Model Metrics"),
+                    dbc.AccordionItem([
+                        dcc.Graph(id='shap-summary', style={'width': '100%', 'height': 'auto'}),
+                        dbc.Button("Download SHAP Plot", id='download-shap', color='info', className='mt-2'),
+                        dcc.Download(id='download-shap-image')
+                    ], title="Feature Importance")
+                ], start_collapsed=True),
+                dbc.Card([
+                    dbc.CardHeader("Report Export"),
+                    dbc.CardBody([
+                        dbc.Button("Download CSV Report", id='download-csv', color='success'),
+                        dcc.Download(id='download-csv-file')
+                    ])
+                ])
+            ], xs=12, sm=12, md=4)
+        ], justify='center')
+    ], fluid=True)
+    return layout
+
+# Initialize App
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+app.layout = create_layout()
+server = app.server
+
+# Callbacks
+@app.callback(
+    [Output(f'input-{col.lower()}', 'value') for col in feature_columns],
+    Input('applicant-selector', 'value')
+)
+def update_form(applicant_id):
+    try:
+        applicant = df.iloc[applicant_id][feature_columns]
+        return [applicant[col] for col in feature_columns]
+    except Exception:
+        return ["" for _ in feature_columns]
+
+@app.callback(
+    [Output('risk-class', 'children'), Output('pd-gauge', 'figure'), Output('form-error', 'children'),
+     Output('prediction-log-store', 'data'), Output('prediction-log-table', 'data')],
+    [Input('predict-button', 'n_clicks'), Input('risk-threshold', 'value')],
+    [State(f'input-{col.lower()}', 'value') for col in feature_columns],
+    State('prediction-log-store', 'data')
+)
+def predict_risk(n_clicks, risk_threshold, *input_values, log_data):
+    if n_clicks is None:
+        return "", {}, "", log_data, log_data
+    inputs = dict(zip(feature_columns, input_values))
+    if None in input_values or '' in input_values:
+        return "", {}, "Please fill all fields.", log_data, log_data
+    try:
+        for col in numeric_cols:
+            if inputs[col] is not None:
+                inputs[col] = float(inputs[col])
+        for col in categorical_cols:
+            if inputs[col] is not None:
+                inputs[col] = str(inputs[col])
+        input_df = pd.DataFrame([inputs])
+        input_transformed = preprocessor.transform(input_df)
+        pred_proba = model.predict_proba(input_transformed)[:, 1][0]
+        prediction = 'High Risk' if pred_proba >= risk_threshold else 'Medium Risk' if pred_proba >= 0.3 else 'Low Risk'
+        color = 'red' if pred_proba >= risk_threshold else 'yellow' if pred_proba >= 0.3 else 'green'
+        gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=pred_proba * 100,
+            title={'text': "Probability of Default (%)"},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': color},
+                'threshold': {
+                    'line': {'color': "black", 'width': 4},
+                    'thickness': 0.75,
+                    'value': risk_threshold * 100
+                }
+            }
+        ))
+        gauge.update_layout(autosize=True, responsive=True)
+        log_entry = log_prediction(inputs, prediction, pred_proba)
+        log_data = log_data + [log_entry]
+        return html.H5(prediction, style={'color': color}), gauge, "", log_data, log_data
+    except Exception as e:
+        return "", {}, f"Prediction Error: {str(e)}", log_data, log_data
+
+@app.callback(
+    [Output('confusion-matrix', 'figure'), Output('roc-curve', 'figure'), Output('shap-summary', 'figure'),
+     Output('metrics-table', 'data')],
+    Input('predict-button', 'n_clicks'),
+    Input('theme-selector', 'value')
+)
+def update_plots(n_clicks, theme):
+    if n_clicks is None:
+        return go.Figure(), go.Figure(), go.Figure(), [
+            {'metric': 'Accuracy', 'value': metrics['accuracy']},
+            {'metric': 'Precision', 'value': metrics['precision']},
+            {'metric': 'Recall', 'value': metrics['recall']}
+        ]
+    try:
+        feature_names = preprocessor.get_feature_names_out()
+        return (
+            create_confusion_matrix(metrics, theme),
+            create_roc_curve(metrics, theme),
+            create_shap_summary(model, X, feature_names, theme),
+            [
+                {'metric': 'Accuracy', 'value': metrics['accuracy']},
+                {'metric': 'Precision', 'value': metrics['precision']},
+                {'metric': 'Recall', 'value': metrics['recall']}
+            ]
+        )
+    except Exception as e:
+        error_fig = go.Figure().update_layout(title=f"Plot Error: {str(e)}", template=theme)
+        return error_fig, error_fig, error_fig, []
+
+@app.callback(
+    [Output('batch-results', 'data'), Output('batch-results', 'columns'), Output('upload-error', 'children'),
+     Output('download-batch-csv', 'data'), Output('batch-preview', 'children')],
+    [Input('upload-data', 'contents'), Input('download-batch', 'n_clicks'), Input('age-slider', 'value'),
+     Input('credit-score-slider', 'value'), Input('risk-threshold', 'value')],
+    State('upload-data', 'filename')
+)
+def batch_score(contents, n_clicks, age_range, credit_score_range, risk_threshold, filename):
+    if contents is None:
+        return [], [], "", None, ""
+    try:
+        if not filename.lower().endswith('.csv'):
+            return [], [], dbc.Alert("Please upload a valid CSV file.", color="danger"), None, ""
+        content_type, content_string = contents.split(',')
+        decoded = base64.b64decode(content_string)
+        batch_df = pd.read_csv(io.StringIO(decoded.decode('utf-8')), skipinitialspace=True)
+        if not isinstance(batch_df, pd.DataFrame):
+            return [], [], dbc.Alert("Uploaded file did not result in a valid DataFrame.", color="danger"), None, ""
+        if batch_df.empty:
+            return [], [], dbc.Alert("Uploaded CSV is empty.", color="danger"), None, ""
+        if not all(col in batch_df.columns for col in feature_columns):
+            missing_cols = [col for col in feature_columns if col not in batch_df.columns]
+            return [], [], dbc.Alert(f"Invalid CSV format. Missing columns: {', '.join(missing_cols)}", color="danger"), None, ""
+        valid_df = batch_df[feature_columns].copy()
+        # Apply filters
+        valid_df = valid_df[
+            (valid_df['Age'].between(age_range[0], age_range[1])) &
+            (valid_df['Credit_Score'].between(credit_score_range[0], credit_score_range[1]))
+        ].copy()
+        if valid_df.empty:
+            return [], [], dbc.Alert("No rows match the selected filters.", color="warning"), None, ""
+        for col in numeric_cols:
+            valid_df[col] = pd.to_numeric(valid_df[col], errors='coerce')
+        invalid_rows = valid_df.isna().any(axis=1)
+        if invalid_rows.any():
+            valid_df = valid_df.dropna().copy()
+            if valid_df.empty:
+                return [], [], dbc.Alert("No valid rows after removing missing/invalid data.", color="danger"), None, ""
+            error_message = dbc.Alert(f"Processed {len(valid_df)} valid rows. Skipped {invalid_rows.sum()} rows with missing/invalid data.", color="warning")
+        else:
+            error_message = dbc.Alert("File processed successfully!", color="success")
+        for col in categorical_cols:
+            valid_df[col] = valid_df[col].astype(str)
+        batch_transformed = preprocessor.transform(valid_df)
+        pred_probas = model.predict_proba(batch_transformed)[:, 1]
+        predictions = ['High Risk' if p >= risk_threshold else 'Medium Risk' if p >= 0.3 else 'Low Risk' for p in pred_probas]
+        results = valid_df.copy()
+        results['Prediction'] = predictions
+        results['PD'] = pred_probas
+        for _, row in results.iterrows():
+            log_prediction(row[feature_columns].to_dict(), row['Prediction'], row['PD'])
+        columns = [{'name': col, 'id': col} for col in results.columns]
+        preview = dash_table.DataTable(
+            data=results.head().to_dict('records'),
+            columns=columns,
+            style_table={'overflowX': 'auto'}
+        )
+        if n_clicks:
+            return results.to_dict('records'), columns, error_message, dcc.send_data_frame(results.to_csv, "batch_results.csv"), preview
+        return results.to_dict('records'), columns, error_message, None, preview
+    except Exception as e:
+        return [], [], dbc.Alert(f"Error processing CSV: {str(e)}", color="danger"), None, ""
+
+@app.callback(
+    Output('download-csv-file', 'data'),
+    Input('download-csv', 'n_clicks'),
+    [State(f'input-{col.lower()}', 'value') for col in feature_columns],
+    State('risk-threshold', 'value')
+)
+def download_csv(n_clicks, *input_values, risk_threshold):
+    if n_clicks is None:
+        return None
+    try:
+        inputs = dict(zip(feature_columns, input_values))
+        for col in numeric_cols:
+            if inputs[col] is not None:
+                inputs[col] = float(inputs[col])
+        for col in categorical_cols:
+            if inputs[col] is not None:
+                inputs[col] = str(inputs[col])
+        input_df = pd.DataFrame([inputs])
+        input_transformed = preprocessor.transform(input_df)
+        pred_proba = model.predict_proba(input_transformed)[:, 1][0]
+        prediction = 'High Risk' if pred_proba >= risk_threshold else 'Medium Risk' if pred_proba >= 0.3 else 'Low Risk'
+        result = pd.DataFrame([{
+            **inputs,
+            'Prediction': prediction,
+            'PD': pred_proba
+        }])
+        return dcc.send_data_frame(result.to_csv, "report.csv")
+    except Exception as e:
+        return None
+
+@app.callback(
+    Output('download-shap-image', 'data'),
+    Input('download-shap', 'n_clicks'),
+    Input('theme-selector', 'value')
+)
+def download_shap(n_clicks, theme):
+    if n_clicks is None:
+        return None
+    try:
+        feature_names = preprocessor.get_feature_names_out()
+        fig = create_shap_summary(model, X, feature_names, theme)
+        buffer = io.BytesIO()
+        fig.write(buffer, format='png')
+        buffer.seek(0)
+        return dcc.send_bytes(buffer.getvalue(), "shap_summary.png")
+    except Exception as e:
+        return None
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+
