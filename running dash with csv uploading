@@ -1,4 +1,3 @@
-
 import dash
 from dash import html, dcc, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
@@ -11,7 +10,6 @@ from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, roc_curve
 import shap
 
@@ -36,18 +34,16 @@ def generate_sample_data():
         'risk': np.random.choice([0, 1], n, p=[0.8, 0.2])
     }
     df = pd.DataFrame(data)
-    # Deterministically set Month_1 to Month_6 based on Missed_Payments
     for i in range(n):
         missed = df.loc[i, 'Missed_Payments']
-        # Scale Missed_Payments (0-5) to 0-6 months for Missed/Late
-        num_missed = min(int((missed / 5) * 3), 3)  # Up to 3 Missed
-        num_late = min(int((missed / 5) * 3), 3) if missed > 2 else 0  # Up to 3 Late if missed > 2
+        num_missed = min(int((missed / 5) * 3), 3)
+        num_late = min(int((missed / 5) * 3), 3) if missed > 2 else 0
         months = ['OnTime'] * 6
         for j in range(num_missed):
-            months[5 - j] = 'Missed'  # Place Missed in most recent months
+            months[5 - j] = 'Missed'
         for j in range(num_late):
             if 5 - num_missed - j >= 0:
-                months[5 - num_missed - j] = 'Late'  # Place Late in earlier months
+                months[5 - num_missed - j] = 'Late'
         for m, month in enumerate(['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6']):
             df.loc[i, month] = months[m]
     return df
@@ -68,9 +64,9 @@ metrics = {
     'confusion_matrix': confusion_matrix(df['risk'], model.predict(X)).tolist(),
     'fpr': roc_curve(df['risk'], model.predict_proba(X)[:, 1])[0].tolist(),
     'tpr': roc_curve(df['risk'], model.predict_proba(X)[:, 1])[1].tolist(),
-    'accuracy': 0.85,  # Simulated
-    'precision': 0.80,  # Simulated
-    'recall': 0.75  # Simulated
+    'accuracy': 0.85,
+    'precision': 0.80,
+    'recall': 0.75
 }
 
 # Utility Functions
@@ -127,7 +123,7 @@ def create_roc_curve(metrics, theme):
 def create_shap_summary(model, X, feature_names, theme):
     try:
         explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X)[1]  # For positive class
+        shap_values = explainer.shap_values(X)[1]
         mean_shap = np.abs(shap_values).mean(axis=0)
         fig = go.Figure()
         fig.add_trace(go.Bar(x=mean_shap, y=feature_names, orientation='h'))
@@ -135,7 +131,7 @@ def create_shap_summary(model, X, feature_names, theme):
             title='SHAP Feature Importance',
             xaxis_title='Mean |SHAP Value|',
             yaxis_title='Feature',
-            height=600,
+            height=max(400, len(feature_names) * 30),
             autosize=True,
             template=theme
         )
@@ -148,14 +144,22 @@ def create_layout():
     input_form = [
         html.H4("Applicant Input Form"),
         *[dbc.Row([
-            dbc.Col(dbc.Label(col), width=4),
+            dbc.Col(dbc.Label(col, style={'fontSize': '0.9rem'}), width=4),
             dbc.Col(
                 dcc.Dropdown(
                     id=f'input-{col.lower()}',
                     options=[{'label': val, 'value': val} for val in (['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique())],
-                    value=df[col].iloc[0]
+                    value=df[col].iloc[0],
+                    style={'fontSize': '0.9rem'}
                 ) if col in categorical_cols else
-                dcc.Input(id=f'input-{col.lower()}', type='number', value=df[col].iloc[0], min=0, step='any'),
+                dcc.Input(
+                    id=f'input-{col.lower()}',
+                    type='number',
+                    value=df[col].iloc[0],
+                    min=0,
+                    step='any',
+                    style={'width': '100%', 'fontSize': '0.9rem'}
+                ),
                 width=8
             )
         ], className='mb-2') for col in feature_columns]
@@ -163,12 +167,11 @@ def create_layout():
     layout = dbc.Container([
         html.H1("Credit Risk Scoring Dashboard", className='text-center my-4'),
         dcc.Store(id='prediction-log-store', data=[]),
-        dcc.Store(id='batch-data-store', data=[]),
         dbc.Row([
             # Sidebar
             dbc.Col([
                 dbc.Card([
-                    dbc.CardHeader("Controls"),
+                    dbc.CardHeader("Controls", style={'fontSize': '1rem'}),
                     dbc.CardBody([
                         dcc.Dropdown(
                             id='theme-selector',
@@ -177,69 +180,74 @@ def create_layout():
                                 {'label': 'Dark Theme', 'value': 'plotly_dark'}
                             ],
                             value='plotly_white',
-                            clearable=False
+                            clearable=False,
+                            style={'fontSize': '0.9rem'}
                         ),
                         html.Hr(),
                         dcc.Dropdown(
                             id='applicant-selector',
                             options=[{'label': f'Applicant {i+1} ({row["Customer_ID"]})', 'value': i} for i, row in df.iterrows()],
-                            value=0
+                            value=0,
+                            style={'fontSize': '0.9rem'}
                         ),
                         html.Hr(),
                         *input_form,
-                        html.Div(id='form-error', className='error-message mb-2'),
-                        dbc.Button("Predict", id='predict-button', color='primary', className='mt-2'),
+                        html.Div(id='form-error', className='error-message mb-2', style={'fontSize': '0.9rem'}),
+                        dbc.Button("Predict", id='predict-button', color='primary', className='mt-2', style={'width': '100%'}),
                         html.Hr(),
-                        html.H4("Filters"),
+                        html.H4("Filters", style={'fontSize': '1rem'}),
                         dcc.RangeSlider(
                             id='age-slider',
                             min=18, max=80, step=1,
                             value=[18, 80],
-                            marks={18: '18', 80: '80'}
+                            marks={18: '18', 80: '80'},
+                            className='mb-3'
                         ),
                         dcc.RangeSlider(
                             id='credit-score-slider',
                             min=300, max=850, step=10,
                             value=[300, 850],
-                            marks={300: '300', 850: '850'}
+                            marks={300: '300', 850: '850'},
+                            className='mb-3'
                         ),
                         dcc.Slider(
                             id='risk-threshold',
                             min=0, max=1, step=0.05,
                             value=0.7,
-                            marks={0: '0', 1: '1'}
+                            marks={0: '0', 1: '1'},
+                            className='mb-3'
                         )
                     ])
                 ], className='mb-4')
-            ], xs=12, sm=12, md=4),
+            ], xs=12, sm=12, md=4, lg=4),
             # Main content
             dbc.Col([
                 dbc.Card([
-                    dbc.CardHeader("Prediction Output"),
+                    dbc.CardHeader("Prediction Output", style={'fontSize': '1rem'}),
                     dbc.CardBody([
-                        html.H5(id='risk-class', className='text-center'),
+                        html.H5(id='risk-class', className='text-center', style={'fontSize': '1rem'}),
                         dcc.Graph(id='pd-gauge', style={'width': '100%', 'height': 'auto'}),
-                        html.Div(id='prediction-error', className='error-message')
+                        html.Div(id='prediction-error', className='error-message', style={'fontSize': '0.9rem'})
                     ])
                 ], className='mb-4'),
                 dbc.Card([
-                    dbc.CardHeader("Batch Scoring"),
+                    dbc.CardHeader("Batch Scoring", style={'fontSize': '1rem'}),
                     dbc.CardBody([
-                        dcc.Upload(id='upload-data', children=dbc.Button('Upload CSV', color='secondary')),
-                        html.Div(id='upload-error', className='error-message mb-2'),
-                        dash_table.DataTable(id='batch-results', page_size=10, style_table={'overflowX': 'auto'}),
+                        dcc.Upload(id='upload-data', children=dbc.Button('Upload CSV', color='secondary', style={'width': '100%'}), style={'width': '100%'}),
+                        html.Div(id='upload-error', className='error-message mb-2', style={'fontSize': '0.9rem'}),
+                        dash_table.DataTable(id='batch-results', page_size=10, style_table={'overflowX': 'auto'}, style_cell={'fontSize': '0.9rem'}),
                         html.Div(id='batch-preview', style={'marginTop': '10px'}),
-                        dbc.Button("Download Batch Results", id='download-batch', color='info', className='mt-2'),
+                        dbc.Button("Download Batch Results", id='download-batch', color='info', className='mt-2', style={'width': '100%'}),
                         dcc.Download(id='download-batch-csv')
                     ])
                 ], className='mb-4'),
                 dbc.Card([
-                    dbc.CardHeader("Prediction Log"),
+                    dbc.CardHeader("Prediction Log", style={'fontSize': '1rem'}),
                     dbc.CardBody([
-                        dash_table.DataTable(id='prediction-log-table', page_size=5, style_table={'overflowX': 'auto'})
+                        dash_table.DataTable(id='prediction-log-table', page_size=5, style_table={'overflowX': 'auto'}, style_cell={'fontSize': '0.9rem'})
                     ])
                 ], className='mb-4')
-            ], xs=12, sm=12, md=4),
+            ], xs=12, sm=12, md=4, lg=4),
             # Model evaluation
             dbc.Col([
                 dbc.Accordion([
@@ -255,25 +263,26 @@ def create_layout():
                                 {'metric': 'Precision', 'value': metrics['precision']},
                                 {'metric': 'Recall', 'value': metrics['recall']}
                             ],
-                            style_table={'overflowX': 'auto'}
+                            style_table={'overflowX': 'auto'},
+                            style_cell={'fontSize': '0.9rem'}
                         ),
                         dcc.Graph(id='confusion-matrix', style={'width': '100%', 'height': 'auto'}),
                         dcc.Graph(id='roc-curve', style={'width': '100%', 'height': 'auto'})
                     ], title="Model Metrics"),
                     dbc.AccordionItem([
                         dcc.Graph(id='shap-summary', style={'width': '100%', 'height': 'auto'}),
-                        dbc.Button("Download SHAP Plot", id='download-shap', color='info', className='mt-2'),
+                        dbc.Button("Download SHAP Plot", id='download-shap', color='info', className='mt-2', style={'width': '100%'}),
                         dcc.Download(id='download-shap-image')
                     ], title="Feature Importance")
                 ], start_collapsed=True),
                 dbc.Card([
-                    dbc.CardHeader("Report Export"),
+                    dbc.CardHeader("Report Export", style={'fontSize': '1rem'}),
                     dbc.CardBody([
-                        dbc.Button("Download CSV Report", id='download-csv', color='success'),
+                        dbc.Button("Download CSV Report", id='download-csv', color='success', style={'width': '100%'}),
                         dcc.Download(id='download-csv-file')
                     ])
-                ])
-            ], xs=12, sm=12, md=4)
+                ], className='mb-4')
+            ], xs=12, sm=12, md=4, lg=4)
         ], justify='center')
     ], fluid=True)
     return layout
@@ -307,7 +316,6 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
         return "", {}, "", log_data or [], log_data or []
     
     inputs = dict(zip(feature_columns, input_values))
-    # Validate inputs
     missing_fields = [col for col, val in inputs.items() if val is None or val == '']
     if missing_fields:
         error_msg = f"Missing or empty fields: {', '.join(missing_fields)}"
@@ -315,7 +323,6 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
         return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
     
     try:
-        # Validate numeric inputs
         for col in numeric_cols:
             try:
                 inputs[col] = float(inputs[col])
@@ -328,7 +335,6 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
                 log_entry = log_prediction(inputs, None, None, error=error_msg)
                 return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
         
-        # Validate categorical inputs
         for col in categorical_cols:
             inputs[col] = str(inputs[col])
             valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique()
@@ -337,16 +343,12 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
                 log_entry = log_prediction(inputs, None, None, error=error_msg)
                 return "", {}, dbc.Alert(error_msg, color="danger"), (log_data or []) + [log_entry], (log_data or []) + [log_entry]
         
-        # Create DataFrame and preprocess
         input_df = pd.DataFrame([inputs])
         input_transformed = preprocessor.transform(input_df)
-        
-        # Make prediction
         pred_proba = model.predict_proba(input_transformed)[:, 1][0]
         prediction = 'High Risk' if pred_proba >= risk_threshold else 'Medium Risk' if pred_proba >= 0.3 else 'Low Risk'
         color = 'red' if pred_proba >= risk_threshold else 'yellow' if pred_proba >= 0.3 else 'green'
         
-        # Create gauge
         gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=pred_proba * 100,
@@ -363,7 +365,6 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
         ))
         gauge.update_layout(autosize=True)
         
-        # Log prediction
         log_entry = log_prediction(inputs, prediction, pred_proba)
         return html.H5(prediction, style={'color': color}), gauge, "", (log_data or []) + [log_entry], (log_data or []) + [log_entry]
     
@@ -425,7 +426,6 @@ def batch_score(contents, n_clicks, age_range, credit_score_range, risk_threshol
             missing_cols = [col for col in feature_columns if col not in batch_df.columns]
             return [], [], dbc.Alert(f"Invalid CSV format. Missing columns: {', '.join(missing_cols)}", color="danger"), None, ""
         valid_df = batch_df[feature_columns].copy()
-        # Apply filters
         valid_df = valid_df[
             (valid_df['Age'].between(age_range[0], age_range[1])) &
             (valid_df['Credit_Score'].between(credit_score_range[0], credit_score_range[1]))
@@ -458,7 +458,8 @@ def batch_score(contents, n_clicks, age_range, credit_score_range, risk_threshol
         preview = dash_table.DataTable(
             data=results.head().to_dict('records'),
             columns=columns,
-            style_table={'overflowX': 'auto'}
+            style_table={'overflowX': 'auto'},
+            style_cell={'fontSize': '0.9rem'}
         )
         if n_clicks:
             return results.to_dict('records'), columns, error_message, dcc.send_data_frame(results.to_csv, "batch_results.csv"), preview
@@ -477,13 +478,11 @@ def download_csv(n_clicks, *input_values, risk_threshold=None):
         return None
     try:
         inputs = dict(zip(feature_columns, input_values))
-        # Validate inputs
         missing_fields = [col for col, val in inputs.items() if val is None or val == '']
         if missing_fields:
-            return None  # Silently return None to avoid crashing
+            return None
         if risk_threshold is None:
-            risk_threshold = 0.7  # Default value if risk_threshold is missing
-        # Validate numeric inputs
+            risk_threshold = 0.7
         for col in numeric_cols:
             try:
                 inputs[col] = float(inputs[col])
@@ -491,7 +490,6 @@ def download_csv(n_clicks, *input_values, risk_threshold=None):
                     return None
             except (ValueError, TypeError):
                 return None
-        # Validate categorical inputs
         for col in categorical_cols:
             inputs[col] = str(inputs[col])
             valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique()
