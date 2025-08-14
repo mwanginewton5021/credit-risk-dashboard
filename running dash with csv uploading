@@ -29,7 +29,7 @@ def generate_sample_data():
         'Debt_to_Income_Ratio': np.random.uniform(0, 0.5, n),
         'Account_Tenure': np.random.randint(1, 20, n),
         'Employment_Status': np.random.choice(['Employed', 'Self-Employed', 'Unemployed'], n),
-        'Credit_Card_Type': np.random.choice(['Visa', 'MasterCard', 'None'], n),
+        'Credit_Card_Type': np.random.choice(['Student', 'Standard', 'Platinum', 'Gold', 'Business'], n),
         'Location': np.random.choice(['Urban', 'Suburban', 'Rural'], n),
         'risk': np.random.choice([0, 1], n, p=[0.8, 0.2])
     }
@@ -148,7 +148,7 @@ def create_layout():
             dbc.Col(
                 dcc.Dropdown(
                     id=f'input-{col.lower()}',
-                    options=[{'label': val, 'value': val} for val in (['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique())],
+                    options=[{'label': val, 'value': val} for val in (['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else ['Student', 'Standard', 'Platinum', 'Gold', 'Business'] if col == 'Credit_Card_Type' else df[col].unique())],
                     value=df[col].iloc[0],
                     style={'fontSize': '0.9rem'}
                 ) if col in categorical_cols else
@@ -337,7 +337,7 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
         
         for col in categorical_cols:
             inputs[col] = str(inputs[col])
-            valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique()
+            valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else ['Student', 'Standard', 'Platinum', 'Gold', 'Business'] if col == 'Credit_Card_Type' else df[col].unique()
             if inputs[col] not in valid_values:
                 error_msg = f"Invalid value for {col}: must be one of {', '.join(map(str, valid_values))}"
                 log_entry = log_prediction(inputs, None, None, error=error_msg)
@@ -376,8 +376,7 @@ def predict_risk(n_clicks, risk_threshold, *input_values, log_data=None):
 @app.callback(
     [Output('confusion-matrix', 'figure'), Output('roc-curve', 'figure'), Output('shap-summary', 'figure'),
      Output('metrics-table', 'data')],
-    Input('predict-button', 'n_clicks'),
-    Input('theme-selector', 'value')
+    [Input('predict-button', 'n_clicks'), Input('theme-selector', 'value')]
 )
 def update_plots(n_clicks, theme):
     if n_clicks is None:
@@ -444,7 +443,7 @@ def batch_score(contents, n_clicks, age_range, credit_score_range, risk_threshol
             error_message = dbc.Alert("File processed successfully!", color="success")
         for col in categorical_cols:
             valid_df[col] = valid_df[col].astype(str)
-            valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique()
+            valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else ['Student', 'Standard', 'Platinum', 'Gold', 'Business'] if col == 'Credit_Card_Type' else df[col].unique()
             valid_df[col] = valid_df[col].apply(lambda x: x if x in valid_values else valid_values[0])
         batch_transformed = preprocessor.transform(valid_df)
         pred_probas = model.predict_proba(batch_transformed)[:, 1]
@@ -492,7 +491,7 @@ def download_csv(n_clicks, *input_values, risk_threshold=None):
                 return None
         for col in categorical_cols:
             inputs[col] = str(inputs[col])
-            valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else df[col].unique()
+            valid_values = ['Missed', 'Late', 'OnTime'] if col in ['Month_1', 'Month_2', 'Month_3', 'Month_4', 'Month_5', 'Month_6'] else ['Student', 'Standard', 'Platinum', 'Gold', 'Business'] if col == 'Credit_Card_Type' else df[col].unique()
             if inputs[col] not in valid_values:
                 return None
         input_df = pd.DataFrame([inputs])
